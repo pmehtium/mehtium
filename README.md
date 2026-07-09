@@ -165,6 +165,19 @@ Prefer to self-host? Run [coturn](https://github.com/coturn/coturn) on a small V
 
 ---
 
+## Calls: reliability & diagnostics
+
+If a call rings the first time but a later call doesn't ring the other side, it's almost always leftover call state from a previous call that didn't clean up (screen lock, app backgrounded, or the socket dropping between calls). BlueChat guards against this:
+
+- An incoming call is only rejected as "busy" if you're in a **genuinely live** call; otherwise stale state is cleared automatically so the new call rings.
+- Ending or cancelling a call notifies the other side (so ringing modals dismiss), and a dropped socket tears the call down locally.
+
+To diagnose call behavior, open the browser console — every call transition is logged with a `[call]` prefix (`[call] incoming …`, `[call] busy -> rejecting`, `[call] stale call state detected -> clearing`, `[call] end …`). On a phone, use remote debugging (Chrome `chrome://inspect`, or Safari Web Inspector) to see the same logs. If you ever see `busy -> rejecting` when you weren't actually on a call, that's the case the guard now handles.
+
+## Earpiece vs. speakerphone (mobile)
+
+On phones, a speaker/earpiece toggle appears in the call controls (it's hidden on desktop, which has no earpiece). It's **best-effort**: it uses the browser's `setSinkId` output-routing API where available (mainly Android Chrome). Note that **iOS Safari does not let web apps switch between the earpiece and loudspeaker** — that's an Apple platform limitation, not a bug in the app — so on iPhones the button is hidden and iOS decides routing itself (it tends to use the earpiece for audio-only and the loudspeaker when video is on). A fully reliable earpiece/speaker switch on every phone would require a native app wrapper.
+
 ## Customizing
 
 - **Colors:** edit the CSS variables at the top of `public/css/styles.css` (`--blue-*`, `--bg`, bubbles…).

@@ -9,6 +9,7 @@ const Calls = (window.Calls = {
   cur: null,      // active call state
   incoming: null, // pending incoming call
   ringTimer: null,
+  speakerOn: true,
 
   async loadIce() {
     try {
@@ -21,6 +22,7 @@ const Calls = (window.Calls = {
   bind(socket) {
     this.socket = socket;
     this.loadIce();
+    setupOutputToggle();
 
     socket.on('call:incoming', (d) => this.onIncoming(d));
     socket.on('call:peer-joined', (d) => this.onPeerJoined(d));
@@ -28,6 +30,13 @@ const Calls = (window.Calls = {
     socket.on('call:rejected', () => this.onRejected());
     socket.on('call:cancelled', () => this.onCancelled());
     socket.on('rtc:signal', (d) => this.onSignal(d));
+
+    // If the socket drops mid-call we can't signal any more — clean up so the
+    // next call isn't blocked by a ghost "in a call" state.
+    socket.on('disconnect', () => {
+      if (this.cur) { clog('socket disconnected during call -> ending'); this.end(); }
+      if (this.incoming) { document.getElementById('incomingModal').classList.remove('show'); this.incoming = null; }
+    });
   },
 
   /* -------- Outgoing -------- */
@@ -61,12 +70,22 @@ const Calls = (window.Calls = {
 
   /* -------- Incoming -------- */
   onIncoming(d) {
+    clog('incoming', d.callId, 'from', d.from.username, 'cur=', this.cur && this.cur.callId);
     // If already in this exact call (group add landing), ignore duplicate.
     if (this.cur && this.cur.callId === d.callId) return;
     if (this.cur) {
-      // Busy: auto-reject.
-      this.socket.emit('call:reject', { callId: d.callId, toId: d.from.id });
-      return;
+      // Only reject if we're genuinely in a LIVE call. Otherwise the previous
+      // call left stale state (screen lock / socket drop) — clear it and ring.
+      const live = [...this.cur.peers.values()].some(
+        (p) => p.pc && ['connecting', 'connected', 'completed'].includes(p.pc.connectionState)
+      );
+      if (live) {
+        clog('busy -> rejecting', d.callId);
+        this.socket.emit('call:reject', { callId: d.callId, toId: d.from.id });
+        return;
+      }
+      clog('stale call state detected -> clearing before ringing');
+      this.end();
     }
     this.incoming = d;
     const modal = document.getElementById('incomingModal');
@@ -161,6 +180,7 @@ const Calls = (window.Calls = {
       entry.stream = e.streams[0];
       attachRemote(entry, e.streams[0]);
       setStatus('');
+      applySink(this.speakerOn); // route audio to the chosen output
     };
     pc.onconnectionstatechange = () => {
       if (['failed', 'closed'].includes(pc.connectionState)) {
@@ -210,6 +230,14 @@ const Calls = (window.Calls = {
     document.getElementById('ccCam').classList.toggle('active', this.cur.camOn);
     document.querySelector('.tile.self')?.classList.toggle('novideo', !this.cur.camOn);
   },
+  // Mobile only: switch audio output between earpiece and loudspeaker (best effort).
+  async toggleSpeaker() {
+    this.speakerOn = !this.speakerOn;
+    document.getElementById('ccSpeaker').classList.toggle('active', this.speakerOn);
+    await applySink(this.speakerOn);
+    BC.toast(this.speakerOn ? '🔊 Speaker' : '📞 Earpiece');
+  },
+
   openPicker() {
     if (!this.cur) return;
     if (this.cur.peers.size >= 3) return BC.toast('Group calls support up to 4 people.');
@@ -242,9 +270,15 @@ const Calls = (window.Calls = {
   end() {
     clearTimeout(this.ringTimer);
     if (this.cur) {
-      this.socket.emit('call:leave', { callId: this.cur.callId });
-      this.cur.peers.forEach((e) => e.pc && e.pc.close());
-      this.cur.localStream.getTracks().forEach((t) => t.stop());
+      clog('end', this.cur.callId);
+      const callId = this.cur.callId;
+      this.cur.peers.forEach((e, peerId) => {
+        // Peers that never connected are still ringing — tell them to stop.
+        if (!e.pc) this.socket.emit('call:cancel', { callId, toId: peerId });
+        if (e.pc) e.pc.close();
+      });
+      this.socket.emit('call:leave', { callId });
+      try { this.cur.localStream.getTracks().forEach((t) => t.stop()); } catch {}
     }
     this.cur = null;
     document.getElementById('callGrid').innerHTML = '';
@@ -253,8 +287,36 @@ const Calls = (window.Calls = {
 });
 
 /* ---------------- helpers ---------------- */
+function clog(...args) { try { console.log('[call]', ...args); } catch {} }
+
 function newCall(callId, media, localStream) {
   return { callId, media, localStream, peers: new Map(), micOn: true, camOn: media === 'video', swapped: false };
+}
+
+// Show the earpiece/speaker button only on mobile browsers that can switch output.
+const OUTPUT_SUPPORTED = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
+const IS_MOBILE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+function setupOutputToggle() {
+  const btn = document.getElementById('ccSpeaker');
+  if (!btn) return;
+  btn.style.display = IS_MOBILE && OUTPUT_SUPPORTED ? 'grid' : 'none';
+}
+// Route all remote audio to earpiece (speaker=false) or loudspeaker (speaker=true).
+async function applySink(speaker) {
+  if (!OUTPUT_SUPPORTED) return;
+  let target = ''; // '' = system default
+  try {
+    const outs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput');
+    if (speaker) {
+      const spk = outs.find((d) => /speaker|speakerphone/i.test(d.label));
+      target = spk ? spk.deviceId : (outs.find((d) => d.deviceId === 'default')?.deviceId || '');
+    } else {
+      const ear = outs.find((d) => /earpiece|receiver|handset/i.test(d.label));
+      target = ear ? ear.deviceId : '';
+    }
+    const els = [...document.querySelectorAll('#callGrid video')];
+    await Promise.all(els.map((el) => (el.setSinkId ? el.setSinkId(target).catch(() => {}) : null)));
+  } catch { /* best effort */ }
 }
 
 async function getLocal(media) {
@@ -351,6 +413,7 @@ document.getElementById('videoCallBtn').onclick = () => Calls.start('video');
 document.getElementById('ccMic').onclick = () => Calls.toggleMic();
 document.getElementById('ccCam').onclick = () => Calls.toggleCam();
 document.getElementById('ccAdd').onclick = () => Calls.openPicker();
+document.getElementById('ccSpeaker').onclick = () => Calls.toggleSpeaker();
 document.getElementById('ccEnd').onclick = () => Calls.end();
 document.getElementById('incAccept').onclick = () => Calls.accept();
 document.getElementById('incReject').onclick = () => Calls.reject();
