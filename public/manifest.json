@@ -1,0 +1,16 @@
+{
+  "name": "BlueChat",
+  "short_name": "BlueChat",
+  "description": "Chat, voice and video calls.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f8fe",
+  "theme_color": "#1560d4",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%231560d4'/><path d='M50 22c-16 0-29 11-29 25 0 6 3 12 8 16l-3 12 13-5c3 1 7 2 11 2 16 0 29-11 29-25S66 22 50 22z' fill='white'/></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

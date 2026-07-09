@@ -1,0 +1,52 @@
+# Render Blueprint for BlueChat
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy: push this repo to GitHub, then in Render click
+#   New +  ->  Blueprint  ->  pick this repo. Render reads this file.
+#
+services:
+  - type: web
+    name: bluechat
+    runtime: node
+    plan: free                 # upgrade to "starter" if you add a persistent disk
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true    # Render generates a strong random secret for you
+
+      # ---- Database ----
+      # DEFAULT below uses a LOCAL SQLite file. On Render's free tier this
+      # file is wiped on every deploy/restart. To persist for FREE, create a
+      # Turso DB (https://turso.tech) and set DATABASE_URL + DATABASE_AUTH_TOKEN
+      # here to your libsql:// URL and token (then remove the file: default).
+      - key: DATABASE_URL
+        value: file:/tmp/bluechat.db
+      - key: DATABASE_AUTH_TOKEN
+        sync: false            # set manually in dashboard if using Turso
+
+      # ---- Registration secret phrases ----
+      - key: SECRET_PHRASES
+        value: "copper lantern river echo marble fox|silver thunder maple quartz otter drift|amber canyon velvet signal harbor pine|crimson willow pixel nomad glacier bloom|cobalt meadow falcon ember cipher tide"
+
+      # ---- WebRTC ----
+      - key: STUN_URLS
+        value: "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+      - key: TURN_URLS
+        sync: false            # set from your Metered.ca dashboard
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false
+
+# ------------------------------------------------------------------
+# OPTIONAL: persist the local SQLite file with a paid persistent disk.
+# Uncomment below AND change `plan: free` to `plan: starter` above,
+# then set DATABASE_URL=file:/var/data/bluechat.db
+# ------------------------------------------------------------------
+#    disk:
+#      name: bluechat-data
+#      mountPath: /var/data
+#      sizeGB: 1
