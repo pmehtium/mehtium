@@ -159,7 +159,7 @@ Prefer to self-host? Run [coturn](https://github.com/coturn/coturn) on a small V
 ## How it works (quick tour)
 
 - **Auth:** `POST /api/auth/register` checks your username, password (bcrypt-hashed) and secret phrase, then returns a **JWT**. The browser stores it and reuses it. Socket.io connections are authenticated with the same token in the handshake.
-- **Chat:** messages go over Socket.io, are written to the `messages` table, and are relayed to the recipient's room (`u:<id>`). If the recipient is offline, the message is stored `delivered=0` and pushed the moment they reconnect.
+- **Chat:** messages are **encrypted in the browser** (see End-to-end encryption below), sent over Socket.io as ciphertext, written to the `messages` table as ciphertext, and relayed to the recipient's room (`u:<id>`). If the recipient is offline, the message is stored `delivered=0` and pushed the moment they reconnect.
 - **Calls:** the signaling server never touches your audio/video — it only relays SDP offers/answers and ICE candidates between browsers (`rtc:signal`). Media flows **peer-to-peer**.
 - **Group calls:** a **mesh** — each participant holds a direct connection to every other participant. When someone new accepts, they create offers to everyone already in the call. Capped at 4 total to keep the mesh light.
 
@@ -174,9 +174,20 @@ Prefer to self-host? Run [coturn](https://github.com/coturn/coturn) on a small V
 
 ---
 
-## Security notes
+## End-to-end encryption
 
-This is a solid foundation, not a hardened production messenger. Before real-world use consider: rate-limiting auth endpoints, message length/spam limits (a basic 4 000-char cap is in place), HTTPS-only cookies if you move JWTs off `localStorage`, and end-to-end encryption (messages are currently stored in plaintext in your own database). WebRTC media is always encrypted in transit (DTLS-SRTP) by the browser.
+BlueChat is end-to-end encrypted across the board:
+
+- **Chats (1:1):** every message is encrypted in your browser with a key that only you and the recipient can derive. On login the app generates an **ECDH P-256** key pair; the private key never leaves your device (`localStorage`), and only the public key is uploaded. Sender and recipient derive a shared **AES-GCM 256** key via ECDH and encrypt/decrypt locally. **The server and the SQLite database only ever store ciphertext** (`e2:…`) — a database dump reveals nothing readable. This is verified in the automated test suite.
+- **Voice / video / group calls:** WebRTC media is peer-to-peer and always encrypted with **DTLS-SRTP** by the browser. The signaling server only relays connection setup (SDP/ICE), never audio or video, so calls are end-to-end encrypted by design — even a TURN relay only forwards encrypted packets it can't read. Group calls are a mesh of these individually-encrypted peer connections.
+
+Key-management caveat (by design, worth knowing): the chat private key is stored per-device. If a user signs in on a **new device**, that device generates a fresh key, so it can send/receive new messages but can't decrypt history created on the old device. Clearing browser storage has the same effect. For a v1 this is a reasonable trade-off; a future upgrade could derive keys deterministically from the password or add encrypted key backup.
+
+Still worth adding before heavy production use: rate-limiting on the auth endpoints and spam/flood limits (a 4 000-char message cap is already in place).
+
+## A note on where data lives
+
+The SQLite database is **server-side** (on Render), not on each user's phone — and it has to be, because it's the shared relay that routes messages between people who are rarely online at the same second (offline messages are held until you reconnect). You can't put that one shared database on a single user's device. What makes this private isn't the *location* of the database but the *encryption*: with E2EE, that server-side DB holds only ciphertext, so "on the server" no longer means "readable by the server." (If you ever want a local decrypted copy of your own history cached on each device, that's a separate feature — an in-browser IndexedDB mirror — and easy to add later.)
 
 ---
 

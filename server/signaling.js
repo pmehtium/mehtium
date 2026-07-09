@@ -8,6 +8,8 @@ import {
   getConversation,
   getUndelivered,
   markDelivered,
+  setPubkey,
+  getPubkey,
 } from './db.js';
 
 // userId -> Set<socketId>
@@ -62,6 +64,16 @@ export function attachSignaling(io) {
     } catch (e) {
       console.error('[deliver pending]', e);
     }
+
+    // ---------- E2EE public keys ----------
+    // Client publishes its ECDH public key (JWK string) after login.
+    socket.on('me:pubkey', async ({ pubkey }) => {
+      if (typeof pubkey === 'string' && pubkey.length < 2000) await setPubkey(me.id, pubkey);
+    });
+    // Fetch another user's public key to derive a shared secret.
+    socket.on('user:pubkey', async ({ userId }, cb) => {
+      cb?.({ pubkey: await getPubkey(Number(userId)) });
+    });
 
     // ---------- Contacts & search ----------
     socket.on('contacts:list', async (_data, cb) => {

@@ -26,6 +26,7 @@ export async function initDb() {
         username   TEXT UNIQUE NOT NULL,
         password   TEXT NOT NULL,
         avatar_hue INTEGER NOT NULL DEFAULT 210,
+        pubkey     TEXT,
         created_at INTEGER NOT NULL
       )`,
       `CREATE TABLE IF NOT EXISTS contacts (
@@ -49,7 +50,21 @@ export async function initDb() {
     ],
     'write'
   );
+  // Migration for databases created before E2EE was added.
+  try {
+    await db.execute(`ALTER TABLE users ADD COLUMN pubkey TEXT`);
+  } catch {
+    /* column already exists */
+  }
   console.log(`[db] ready (${config.databaseUrl.split('?')[0]})`);
+}
+
+export async function setPubkey(userId, pubkey) {
+  await db.execute({ sql: `UPDATE users SET pubkey = ? WHERE id = ?`, args: [pubkey, userId] });
+}
+export async function getPubkey(userId) {
+  const res = await db.execute({ sql: `SELECT pubkey FROM users WHERE id = ?`, args: [userId] });
+  return res.rows[0]?.pubkey || null;
 }
 
 // ---------- Users ----------
@@ -73,7 +88,7 @@ export async function findUserByUsername(username) {
 
 export async function findUserById(id) {
   const res = await db.execute({
-    sql: `SELECT id, username, avatar_hue FROM users WHERE id = ?`,
+    sql: `SELECT id, username, avatar_hue, pubkey FROM users WHERE id = ?`,
     args: [id],
   });
   return res.rows[0] || null;
@@ -81,7 +96,7 @@ export async function findUserById(id) {
 
 export async function searchUsers(query, excludeId) {
   const res = await db.execute({
-    sql: `SELECT id, username, avatar_hue FROM users
+    sql: `SELECT id, username, avatar_hue, pubkey FROM users
           WHERE username LIKE ? COLLATE NOCASE AND id != ?
           ORDER BY username LIMIT 15`,
     args: [`%${query}%`, excludeId],
@@ -110,7 +125,7 @@ export async function addContact(ownerId, contactId) {
 
 export async function listContacts(ownerId) {
   const res = await db.execute({
-    sql: `SELECT u.id, u.username, u.avatar_hue,
+    sql: `SELECT u.id, u.username, u.avatar_hue, u.pubkey,
                  (SELECT body FROM messages m
                    WHERE (m.sender_id = c.owner_id AND m.receiver_id = c.contact_id)
                       OR (m.sender_id = c.contact_id AND m.receiver_id = c.owner_id)

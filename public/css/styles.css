@@ -190,26 +190,54 @@ input { font-family: inherit; }
 .composer .send svg { width: 22px; height: 22px; }
 
 /* ---------------- Call overlay ---------------- */
-.call-overlay { position: fixed; inset: 0; z-index: 50; background: #08172e; display: none; flex-direction: column; }
+.call-overlay {
+  position: fixed; inset: 0; height: 100vh; height: 100dvh; z-index: 50;
+  background: #08172e; display: none; flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+}
 .call-overlay.show { display: flex; }
-.call-grid { flex: 1; display: grid; gap: 8px; padding: 10px; grid-template-columns: 1fr; align-content: center; }
-.call-grid.g2 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-@media (min-width: 700px) { .call-grid.g2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; } }
-.call-grid.g3, .call-grid.g4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.tile { position: relative; background: #10233f; border-radius: 16px; overflow: hidden; display: grid; place-items: center; }
+
+.call-status { flex: 0 0 auto; text-align: center; color: #cfe0ff; padding: 12px 14px; font-size: 15px; font-weight: 500; }
+
+/* The stage holds all call tiles */
+.call-grid { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+
+/* ---- 1:1 (duo): remote fills screen, self is a small picture-in-picture ---- */
+.call-grid.stage-duo .tile { position: absolute; }
+.call-grid.stage-duo .tile.is-big { inset: 0; border-radius: 0; }
+.call-grid.stage-duo .tile.is-pip {
+  width: 104px; height: 150px; right: 14px; bottom: 14px; border-radius: 14px;
+  z-index: 6; box-shadow: 0 6px 22px rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.75);
+  cursor: pointer;
+}
+.call-grid.stage-duo .tile.is-pip .label { display: none; }
+.call-grid.stage-duo .tile.is-pip::after {
+  content: ''; position: absolute; right: 7px; top: 7px; width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(0,0,0,.45) url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='17 1 21 5 17 9'/><path d='M3 11V9a4 4 0 0 1 4-4h14'/><polyline points='7 23 3 19 7 15'/><path d='M21 13v2a4 4 0 0 1-4 4H3'/></svg>") center/13px no-repeat;
+}
+
+/* ---- Group (3–4 people): equal grid, self included ---- */
+.call-grid.stage-grid { display: grid; gap: 8px; padding: 8px; align-content: stretch; }
+.call-grid.stage-grid.g3, .call-grid.stage-grid.g4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.call-grid.stage-grid .tile { position: relative; }
+
+.tile { background: #10233f; border-radius: 16px; overflow: hidden; display: grid; place-items: center; min-height: 0; }
 .tile video { width: 100%; height: 100%; object-fit: cover; background: #10233f; }
 .tile .novid { position: absolute; inset: 0; display: grid; place-items: center; }
 .tile .label { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.5); color: #fff; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px; }
-.tile .muted-ic { position: absolute; right: 10px; top: 10px; background: rgba(0,0,0,.5); color: #fff; width: 28px; height: 28px; border-radius: 50%; display: none; place-items: center; }
-.tile.muted .muted-ic { display: grid; }
 .tile.self video { transform: scaleX(-1); }
 
-.call-status { text-align: center; color: #cfe0ff; padding: 14px; font-size: 15px; }
-.call-controls { display: flex; justify-content: center; gap: 16px; padding: 20px 16px 34px; }
-.cc { width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff; display: grid; place-items: center; transition: .15s; }
-.cc:hover { background: rgba(255,255,255,.24); }
+.call-controls {
+  flex: 0 0 auto; display: flex; justify-content: center; gap: 16px;
+  padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(8,23,46,.96), rgba(8,23,46,0));
+  z-index: 7;
+}
+.cc { width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.16); color: #fff; display: grid; place-items: center; transition: .15s; -webkit-tap-highlight-color: transparent; }
+.cc:hover { background: rgba(255,255,255,.26); }
 .cc svg { width: 26px; height: 26px; }
 .cc.active { background: #fff; color: var(--blue-700); }
+.cc.off { background: rgba(255,255,255,.16); color: #fff; }
 .cc.end { background: var(--danger); }
 .cc.end:hover { background: #d33; }
 .cc.add { background: var(--blue-600); }

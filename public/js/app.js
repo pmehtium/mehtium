@@ -10,6 +10,7 @@ const BC = (window.BC = {
   token: null,
   currentPeer: null, // { id, username, avatar_hue, online }
   contacts: new Map(), // id -> contact
+  pubkeys: new Map(), // id -> public key JWK string (for E2EE)
   // helpers
   initials(name = '?') {
     return name.trim().slice(0, 2).toUpperCase();
@@ -120,12 +121,19 @@ function connectSocket() {
     if (e.message === 'unauthorized') { BC.toast('Session expired, please sign in again.'); logout(); }
   });
 
-  socket.on('connect', () => refreshContacts());
+  socket.on('connect', async () => {
+    // Set up end-to-end encryption keys and publish our public key.
+    try {
+      const pub = await E2EE.init(BC.me.username);
+      socket.emit('me:pubkey', { pubkey: JSON.stringify(pub) });
+    } catch (e) { console.error('E2EE init failed', e); }
+    refreshContacts();
+  });
 
-  socket.on('chat:message', (m) => {
-    // Incoming or echoed message.
+  socket.on('chat:message', async (m) => {
+    const dm = await decryptMessage(m);
     if (BC.currentPeer && (m.from === BC.currentPeer.id || m.to === BC.currentPeer.id)) {
-      appendMessage(m);
+      appendMessage(dm);
       scrollMessages();
     } else if (m.from !== BC.me.id) {
       const c = BC.contacts.get(m.from);
@@ -164,7 +172,11 @@ function refreshContacts() {
   if (!BC.socket) return;
   BC.socket.emit('contacts:list', {}, (rows) => {
     BC.contacts.clear();
-    rows.forEach((r) => BC.contacts.set(Number(r.id), { ...r, id: Number(r.id) }));
+    rows.forEach((r) => {
+      const id = Number(r.id);
+      BC.contacts.set(id, { ...r, id });
+      if (r.pubkey) BC.pubkeys.set(id, r.pubkey);
+    });
     if (!$('searchInput').value.trim()) renderSideList();
   });
 }
@@ -178,16 +190,27 @@ function renderSideList() {
   }
   list.innerHTML = `<div class="list-label">Chats</div>`;
   items.forEach((c) => {
+    const enc = c.last_body && c.last_body.startsWith('e2:');
+    const preview = c.last_body ? (enc ? '🔒 Encrypted message' : esc(c.last_body)) : 'Tap to start chatting';
     const row = document.createElement('div');
     row.className = 'row' + (BC.currentPeer && BC.currentPeer.id === c.id ? ' active' : '');
+    row.dataset.cid = c.id;
     row.innerHTML = `
       <div class="avatar">${avatarInner(c.username, c.avatar_hue, c.online)}</div>
       <div class="meta">
         <div class="name"><span>${esc(c.username)}</span>${c.last_at ? `<span class="time">${BC.fmtTime(c.last_at)}</span>` : ''}</div>
-        <div class="preview">${c.last_body ? esc(c.last_body) : 'Tap to start chatting'}</div>
+        <div class="preview">${preview}</div>
       </div>`;
     row.onclick = () => openConversation(c);
     list.appendChild(row);
+  });
+  // Decrypt encrypted previews in the background.
+  items.forEach(async (c) => {
+    if (c.last_body && c.last_body.startsWith('e2:')) {
+      const text = await E2EE.decrypt(await getAes(c.id), c.last_body);
+      const el = list.querySelector(`.row[data-cid="${c.id}"] .preview`);
+      if (el) el.textContent = text;
+    }
   });
 }
 
@@ -197,6 +220,7 @@ function renderSearchResults(rows) {
   list.innerHTML = `<div class="list-label">Search results</div>`;
   rows.forEach((u) => {
     u.id = Number(u.id);
+    if (u.pubkey) BC.pubkeys.set(u.id, u.pubkey);
     const row = document.createElement('div');
     row.className = 'row';
     const known = BC.contacts.has(u.id);
@@ -224,6 +248,26 @@ function renderSearchResults(rows) {
   });
 }
 
+/* ---------------- E2E encryption helpers ---------------- */
+async function getAes(userId) {
+  let pk = BC.pubkeys.get(userId);
+  if (!pk) {
+    const c = BC.contacts.get(userId);
+    if (c && c.pubkey) pk = c.pubkey;
+  }
+  if (!pk) {
+    pk = await new Promise((r) => BC.socket.emit('user:pubkey', { userId }, (res) => r(res && res.pubkey)));
+  }
+  if (pk) BC.pubkeys.set(userId, pk);
+  return E2EE.deriveAes(userId, pk);
+}
+
+async function decryptMessage(m) {
+  const other = m.from === BC.me.id ? m.to : m.from;
+  const aes = await getAes(other);
+  return { ...m, body: await E2EE.decrypt(aes, m.body) };
+}
+
 /* ---------------- Conversation ---------------- */
 function openConversation(peer) {
   BC.currentPeer = { ...peer, id: Number(peer.id) };
@@ -236,9 +280,10 @@ function openConversation(peer) {
   renderSideList();
 
   $('messages').innerHTML = '';
-  BC.socket.emit('chat:history', { withId: peer.id }, (rows) => {
+  BC.socket.emit('chat:history', { withId: peer.id }, async (rows) => {
+    const decoded = await Promise.all(rows.map(decryptMessage));
     let lastDay = '';
-    rows.forEach((m) => {
+    decoded.forEach((m) => {
       const day = BC.fmtDay(m.at);
       if (day !== lastDay) { addDaySep(day); lastDay = day; }
       appendMessage(m);
@@ -272,14 +317,17 @@ function scrollMessages() {
   m.scrollTop = m.scrollHeight;
 }
 
-function sendMessage() {
+async function sendMessage() {
   const input = $('msgInput');
   const body = input.value.trim();
   if (!body || !BC.currentPeer) return;
   input.value = '';
-  BC.socket.emit('chat:send', { toId: BC.currentPeer.id, body }, (res) => {
+  const peerId = BC.currentPeer.id;
+  const aes = await getAes(peerId);
+  const wire = await E2EE.encrypt(aes, body); // ciphertext for the wire + DB
+  BC.socket.emit('chat:send', { toId: peerId, body: wire }, (res) => {
     if (res.error) return BC.toast(res.error);
-    appendMessage(res.message);
+    appendMessage({ ...res.message, body }); // show our own plaintext locally
     scrollMessages();
     refreshContacts();
   });

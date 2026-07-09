@@ -232,6 +232,13 @@ const Calls = (window.Calls = {
     document.getElementById('pickerModal').classList.add('show');
   },
 
+  // Tap the small picture-in-picture to swap who's shown full-screen.
+  swap() {
+    if (!this.cur) return;
+    this.cur.swapped = !this.cur.swapped;
+    relayout();
+  },
+
   end() {
     clearTimeout(this.ringTimer);
     if (this.cur) {
@@ -247,7 +254,7 @@ const Calls = (window.Calls = {
 
 /* ---------------- helpers ---------------- */
 function newCall(callId, media, localStream) {
-  return { callId, media, localStream, peers: new Map(), micOn: true, camOn: media === 'video' };
+  return { callId, media, localStream, peers: new Map(), micOn: true, camOn: media === 'video', swapped: false };
 }
 
 async function getLocal(media) {
@@ -306,12 +313,31 @@ function attachRemote(entry, stream) {
   entry.tile.classList.toggle('novideo', !hasVideo);
 }
 
-/* Hide/show avatar based on whether a live video is playing. */
-const _origToggle = () => {};
+/* Assign layout roles: 1:1 -> remote big + self picture-in-picture; group -> equal grid. */
 function relayout() {
   const grid = document.getElementById('callGrid');
-  const n = grid.children.length;
-  grid.className = 'call-grid g' + Math.min(n, 4);
+  const tiles = [...grid.children];
+  const selfTile = grid.querySelector('.tile.self');
+  const remotes = tiles.filter((t) => t !== selfTile);
+  tiles.forEach((t) => t.classList.remove('is-big', 'is-pip'));
+  grid.classList.remove('stage-duo', 'stage-grid', 'g1', 'g2', 'g3', 'g4');
+
+  if (remotes.length <= 1) {
+    grid.classList.add('stage-duo');
+    const remote = remotes[0] || null;
+    const swapped = Calls.cur && Calls.cur.swapped && remote;
+    if (!remote) {
+      selfTile && selfTile.classList.add('is-big');
+    } else if (swapped) {
+      selfTile.classList.add('is-big');
+      remote.classList.add('is-pip');
+    } else {
+      remote.classList.add('is-big');
+      selfTile && selfTile.classList.add('is-pip');
+    }
+  } else {
+    grid.classList.add('stage-grid', 'g' + Math.min(tiles.length, 4));
+  }
 }
 
 /* CSS: .tile.novideo hides the video element and shows the avatar */
@@ -330,3 +356,6 @@ document.getElementById('incAccept').onclick = () => Calls.accept();
 document.getElementById('incReject').onclick = () => Calls.reject();
 document.getElementById('pickerClose').onclick = () =>
   document.getElementById('pickerModal').classList.remove('show');
+document.getElementById('callGrid').addEventListener('click', (e) => {
+  if (e.target.closest('.tile.is-pip')) Calls.swap();
+});
